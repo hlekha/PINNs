@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[5]:
+# In[4]:
 
 
 import torch
@@ -11,9 +11,9 @@ import math
 import numpy as np
 from numpy import pi
 from scipy import constants
-from matplotlib.animation import FuncAnimation
-from IPython.display import HTML
+
 # import random
+
 
 """
 Here we will generate a dataset to retrieve observational data
@@ -56,11 +56,15 @@ class SpringPINN(nn.Module):
         return x
 
 
+
+# ========================================================================
+# LOSS
+# ========================================================================
+
 """
 Checking if the predicted motion obeys Newton's 
 Second Law and Hooke's Law
 """
-
 def data_loss(model, times, positions):
     x = model(times)
 
@@ -82,7 +86,7 @@ def physics_loss(model, times, m, scale=1.0):
     )[0]
 
     r_t = m*a + model.k*x
-    loss_physics = scale * torch.mean(r_t)
+    loss_physics = scale * torch.mean(r_t**2)
 
     return loss_physics
 
@@ -93,10 +97,14 @@ def _get_total_loss(model, t_data, x_data, t_physics, m, scale):
     total_loss = loss_data + loss_physics
     return total_loss
 
+# ========================================================================
+# TRAINING
+# ========================================================================
+
 model = SpringPINN()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
-epochs = 5000
+epochs = 10000
 t_plot = torch.linspace(0, 10, 300).unsqueeze(1)
 
 prediction_history = []
@@ -107,7 +115,7 @@ loss_history = []
 for epoch in range(epochs):
     optimizer.zero_grad()
 
-    loss = _get_total_loss(model, t_data, x_data, t_physics, 1.0, 1.0)
+    loss = _get_total_loss(model, t_data, x_data, t_physics, 1.0, 0.1)
 
     loss.backward()
     optimizer.step()
@@ -122,8 +130,98 @@ for epoch in range(epochs):
         loss_history.append(loss.item())
 
     if epoch % 500 == 0:
-        print(f"Epoch {epoch}: Loss = {loss.item():.6f}, k = {model.k.item():.4f}")
+        ld = data_loss(model, t_data, x_data).item()
+        lp = physics_loss(model, t_physics, 1.0, 1.0).item()
 
+        print(
+            f"Epoch {epoch}: "
+            f"Data Loss = {ld:.6f}, "
+            f"Physics Loss = {lp:.6f}, "
+            f"k = {model.k.item():.4f}"
+        )
+
+
+"""
+PLOTS
+"""
+
+model.eval()
+
+# Generate a smooth time grid for plotting
+t_plot = torch.linspace(0, 10, 500).unsqueeze(1)
+
+with torch.no_grad():
+    x_pred = model(t_plot).cpu().numpy().flatten()
+
+# Convert tensors to NumPy
+t_np = t_plot.numpy().flatten()
+t_obs = t_data.detach().numpy().flatten()
+x_obs = x_data.detach().numpy().flatten()
+
+# Analytical solution: m=1, k=4, A=1
+x_true = np.cos(2 * t_np)
+
+# ========================================================================
+# PLOT 1: LEARNED WAVEFUNCTION / DISPLACEMENT
+# ========================================================================
+plt.figure(figsize=(11, 5))
+
+plt.plot(t_np, x_pred,
+         color="blue", linewidth=2,
+         label="PINN Prediction")
+
+plt.plot(t_np, x_true,
+         color="green", linestyle="--",
+         linewidth=2, label="Analytical Solution")
+
+plt.scatter(t_obs, x_obs,
+            color="red", s=55,
+            zorder=5, label="Observed Data")
+
+plt.xlabel("Time (s)")
+plt.ylabel("Displacement (m)")
+plt.title(f"PINN Learned Motion | Estimated k = {model.k.item():.4f}")
+plt.legend()
+plt.grid(alpha=0.3)
+plt.show()
+
+# ========================================================================
+# PLOT 2: LEARNED SPRING CONSTANT
+# ========================================================================
+
+plt.figure(figsize=(10, 5))
+
+plt.plot(epoch_history, k_history,
+         color="blue", linewidth=2,
+         label="Learned k")
+
+plt.axhline(y=4.0,
+            color="red", linestyle="--",
+            label="True k = 4.0")
+
+plt.xlabel("Epoch")
+plt.ylabel("Spring Constant k (N/m)")
+plt.title("PINN Estimation of Unknown Spring Constant")
+plt.legend()
+plt.grid(alpha=0.3)
+plt.show()
+
+# ========================================================================
+# PLOT 3: TRAINING LOSS
+# ========================================================================
+
+plt.figure(figsize=(10, 5))
+
+plt.semilogy(epoch_history, loss_history,
+             color="purple", linewidth=2,
+             label="Total Loss")
+
+plt.xlabel("Epoch")
+plt.ylabel("Total Loss (Log Scale)")
+plt.title("PINN Training Loss")
+plt.legend()
+plt.grid(alpha=0.3)
+plt.show()
 
 
 # In[ ]:
